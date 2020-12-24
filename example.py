@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import os
 from torchvision import datasets, transforms
 from model import *
 from dataset import NMNIST
@@ -18,23 +19,12 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        #data = data.transpose(0, 4)
-        #print(data.shape)
-        data, _ = torch.broadcast_tensors(data, torch.zeros((steps,) + data.shape))
-
-        #out = torch.zeros(target.shape + (10,)).to(device)
-        #out.scatter_(1, target.reshape(-1, 1), 1)
-        #print(data.shape)
-        #data = data.reshape((-1,) + data.shape[2:])
-        #print(data.shape)
-        #print(data.shape)
+        # necessary for general dataset: broadcast input
+        data, _ = torch.broadcast_tensors(data, torch.zeros((steps,) + data.shape)) 
         data = data.permute(1, 2, 3, 4, 0)
-        #target = target.permute(1, 0)
 
         output = model(data)
         loss = F.cross_entropy(output, target)
-        #loss = F.mse_loss(output, out)
-
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -55,40 +45,22 @@ def test(args, model, device, test_loader, epoch, writer):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
 
-            #data = data.transpose(0, 4)
-            #print(data.shape)
             data, _ = torch.broadcast_tensors(data, torch.zeros((steps,) + data.shape))
-            #print(data.shape)
             data = data.permute(1, 2, 3, 4, 0)
-            #data, _ = torch.broadcast_tensors(data, torch.zeros((steps,) + data.shape))
-            #print(data.shape)
-            #data = data.reshape((-1,) + data.shape[2:])
-            #print(data.shape)
-            #out = torch.zeros(target.shape + (10,)).to(device)
-            #out.scatter_(1, target.reshape(-1, 1), 1)
 
             output = model(data)
             test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            #print(pred.shape)
-            #print(target.shape)
-            #target_label = target.argmax(dim=1, keepdim=True)
-
             correct += pred.eq(target.view_as(pred)).sum().item()
+
+
             
-            if isEval == False:
-                x = data
-                for name, layer in model._modules.items():
-                    if '_s' in name:
-                        x = x.view(x.shape[0], -1, x.shape[4]) if "fc1" in name else x
-                        x = layer(x)
-                        writer.add_histogram(f'{name}_feature_maps', x, global_step=epoch)
-                isEval = True
             
 
     test_loss /= len(test_loader.dataset)
 
     writer.add_scalar('Test Loss /epoch', test_loss, epoch)
+    writer.add_scalar('Test Acc /epoch', 100. * correct / len(test_loader.dataset), epoch)
     for i, (name, param) in enumerate(model.named_parameters()):
         if '_s' in name:
             writer.add_histogram(name, param, epoch)
@@ -101,7 +73,7 @@ def test(args, model, device, test_loader, epoch, writer):
     
 def adjust_learning_rate(args, optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 20 epochs"""
-    lr = args.lr * (0.1 ** (epoch // 5))
+    lr = args.lr * (0.1 ** (epoch // 35))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -113,11 +85,11 @@ def main():
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=200, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=20, metavar='N',
+    parser.add_argument('--epochs', type=int, default=800, metavar='N',
                         help='number of epochs to train (default: 10)')
-    parser.add_argument('--lr', type=float, default=1e-1, metavar='LR',
+    parser.add_argument('--lr', type=float, default=1e-3, metavar='LR',
                         help='learning rate (default: 0.01)')
-    parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
+    parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                         help='SGD momentum (default: 0.5)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
@@ -137,11 +109,13 @@ def main():
 
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 
-    writer = SummaryWriter('./summaries/cifar10_4')
+    writer = SummaryWriter('./summaries/resnet_2')
     
     train_loader = torch.utils.data.DataLoader(
         datasets.CIFAR10('./data', train=True, download=True,
                          transform=transforms.Compose([
+                             transforms.RandomHorizontalFlip(),
+                             transforms.RandomCrop(32, padding=4),
                              transforms.ToTensor(),
                              transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
                          ])),
@@ -154,49 +128,18 @@ def main():
                         ])),
         batch_size=args.test_batch_size, shuffle=True, **kwargs)
 
-    '''
-    train_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('./data', train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ])),
-        batch_size=args.batch_size, shuffle=True, **kwargs)
-    test_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('./data', train=False, transform=transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])),
-        batch_size=args.test_batch_size, shuffle=True, **kwargs)
+    model = resnet19().to(device)
     
-    train_loader = torch.utils.data.DataLoader(
-        NMNIST('./data/NMNIST_npy/Train', train=True,  step=steps, dt=dt),
-        batch_size=args.batch_size, shuffle=True, **kwargs)
-    test_loader = torch.utils.data.DataLoader(
-        NMNIST('./data/NMNIST_npy/Test',  train=False, step=steps, dt=dt),
-        batch_size=args.test_batch_size, shuffle=True, **kwargs)
-    '''
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     
-    model = CifarNet().to(device)
-    #for _, (data, _) in enumerate(train_loader):
-    #    data = data.to(device)
-    #    model.initSpikeParam(data[:, :, :, :])
-    #    break
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    
-    #optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    """
     checkpoint_path = './tmp/cifar10/cifar10_spike.pt'
     if os.path.isdir(checkpoint_path) or True:
         checkpoint = torch.load(checkpoint_path)
         model.load_state_dict(checkpoint)
         print('Model loaded.')
-    """
-    #model=nn.DataParallel(model, device_ids=[2,3])
+    
 
-    for epoch in range(1, args.epochs + 1):
-        adjust_learning_rate(args, optimizer, epoch)
-
+    for epoch in range(401, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch, writer)
         test(args, model, device, test_loader, epoch, writer)
 

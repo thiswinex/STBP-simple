@@ -11,31 +11,12 @@ from dataset import NMNIST
 from tensorboardX import SummaryWriter
 
 
-steps = 15
-dt = 5
-simwin = dt * steps
-a = 0.25
-aa = 0.5 # a /2
-Vth = 1.5#0.3
-tau = 0.25#0.3
-
-
 def train(args, model, device, train_loader, optimizer, epoch, writer):
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
-
-        #data = data.transpose(0, 4)
-        #print(data.shape)
-        #data, _ = torch.broadcast_tensors(data, torch.zeros((steps,) + data.shape))
-        #print(data.shape)
-        #data = data.permute(1, 2, 3, 4, 0)
-
         output = model(data)
-        #print(output.shape)
-        #print(target.shape)
         loss = F.mse_loss(output, target)
-
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -52,13 +33,6 @@ def test(args, model, device, test_loader, epoch, writer):
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
-
-            #data = data.transpose(0, 4)
-            #print(data.shape)
-            #data, _ = torch.broadcast_tensors(data, torch.zeros((steps,) + data.shape))
-            #print(data.shape)
-            #data = data.permute(1, 2, 3, 4, 0)
-
             output = model(data)
             test_loss += F.mse_loss(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
@@ -73,8 +47,6 @@ def test(args, model, device, test_loader, epoch, writer):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
-
-
 
 
 def main():
@@ -96,7 +68,6 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
-
     parser.add_argument('--save-model', action='store_true', default=True,
                         help='For Saving the current Model')
     args = parser.parse_args()
@@ -112,8 +83,6 @@ def main():
     
     train_dataset = NMNIST(train=True,  step=steps, dt=dt, path='./data/NMNIST_npy/Train/')
     test_dataset = NMNIST(train=False,  step=steps, dt=dt, path='./data/NMNIST_npy/Test/')
-    #train_dataset.preprocessing('../STBPold/data/N_MNIST/Train/', './data/NMNIST_npy/Train/')
-    #test_dataset.preprocessing('../STBPold/data/N_MNIST/Test/', './data/NMNIST_npy/Test/')
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size, shuffle=True, **kwargs)
@@ -121,19 +90,11 @@ def main():
         test_dataset,
         batch_size=args.test_batch_size, shuffle=True, **kwargs)
     
-
-    
     model = NMNISTNet().to(device)
-    for _, (data, _) in enumerate(train_loader):
-        data = data.to(device)
-        model.initSpikeParam(data[...,0])
-        break
-    #optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    
+
     model=nn.DataParallel(model, device_ids=[2,3])
-
-
+    
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch, writer)
         test(args, model, device, test_loader, epoch, writer)

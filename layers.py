@@ -3,18 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-#import tsensor
-
 steps = 2
 dt = 5
 simwin = dt * steps
 a = 0.25
-aa = 0.5 # a /2
-Vth = 0.2#0.3
-tau = 0.2#0.3
+aa = 0.5    # 梯度近似项 
+Vth = 0.2   # 阈值电压 V_threshold
+tau = 0.25  # 漏电常熟 tau
 
 
 class SpikeAct(torch.autograd.Function):
+    """ 定义脉冲激活函数，并根据论文公式进行梯度的近似。
+        Implementation of the spiking activation function with an approximation of gradient.
+    """
     @staticmethod
     def forward(ctx, input):
         ctx.save_for_backward(input)
@@ -22,10 +23,9 @@ class SpikeAct(torch.autograd.Function):
         output = torch.gt(input, Vth) 
         return output.float()
 
-    # This function has only a single output, so it gets only one gradient
     @staticmethod
     def backward(ctx, grad_output):
-        input, = ctx.saved_tensors # input = u - Vth
+        input, = ctx.saved_tensors 
         grad_input = grad_output.clone()
         # hu is an approximate func of df/du
         hu = abs(input) < aa
@@ -41,71 +41,63 @@ def state_update(u_t_n1, o_t_n1, W_mul_o_t1_n):
     return u_t1_n1, o_t1_n1
 
 
+class tdLayer(nn.Module):
+    """将普通的层转换到时间域上。输入张量需要额外带有时间维，此处时间维在数据的最后一维上。前传时，对该时间维中的每一个时间步的数据都执行一次普通层的前传。
+        Converts a common layer to the time domain. The input tensor needs to have an additional time dimension, which in this case is on the last dimension of the data. When forwarding, a normal layer forward is performed for each time step of the data in that time dimension.
 
-class SpikeLayer(nn.Module):
+    Args:
+        layer (nn.Module): 需要转换的层。
+            The layer needs to convert.
+        bn (nn.Module): 如果需要加入BN，则将BN层一起当做参数传入。
+            If batch-normalization is needed, the BN layer should be passed in together as a parameter.
+    """
     def __init__(self, layer, bn=None):
-        super(SpikeLayer, self).__init__()
+        super(tdLayer, self).__init__()
         self.layer = layer
         self.bn = bn
-        #self.timeorder = False   #TODO Running By Time
-        #TODO 是否需要预置u/out 以及是否需要预置时序优先的训练
 
     def forward(self, x):
-        """ input shape is [N*step, C, H, W] / [N*step, channel]"""
-        
-        #x = x.reshape((-1,) + x.shape[1:] +(steps,))    # reshape to [N, C, H, W, step] / [N, channel, step]
         x_ = torch.zeros(self.layer(x[..., 0]).shape + (steps,), device=x.device)
         for step in range(steps):
             x_[..., step] = self.layer(x[..., step])
 
-        #x_ = torch.squeeze(x_)
         if self.bn is not None:
             x_ = self.bn(x_)
-        #x_ = x_.reshape(x_.shape + (1,))
-        #u   = torch.zeros(x.shape[:-1] , device=x.device)               # u shape: [N, C, H, W] / [N, channel]
-        #out = torch.zeros(x.shape, device=x.device)                     # out shape: [N, C, H, W, step] / [N, channel, step]
-        u   = torch.zeros(x_.shape[:-1] , device=x.device)
-        out = torch.zeros(x_.shape, device=x.device)
-        for step in range(steps):
-            #x_ = self.layer(x[..., step])
-            #print(x_.shape, u.shape, out.shape)
-            u, out[..., step] = state_update(u, out[..., max(step-1, 0)], x_[..., step])
+        return x_
+
         
-        #out = out.reshape((-1,) + out.shape[1:-1])
-        return out
-        '''
-        #x = x.reshape((-1,) + x.shape[1:] +(steps,))    # reshape to [N, C, H, W, step] / [N, channel, step]
-        x = x.reshape((-1,) + x.shape[1:-1])
-        #print(x.shape)
-        #print(self.layer)
-        x_ = self.layer(x)
-        #print(x_.shape)
-        x_ = x_.reshape((-1,) + x_.shape[1:] + (steps,))
-        #print(x_.shape)
-        #u   = torch.zeros(x.shape[:-1] , device=x.device)               # u shape: [N, C, H, W] / [N, channel]
-        #out = torch.zeros(x.shape, device=x.device)                     # out shape: [N, C, H, W, step] / [N, channel, step]
-        u   = torch.zeros(x_.shape[:-1] , device=x.device)
-        out = torch.zeros(x_.shape, device=x.device)
+class LIFSpike(nn.Module):
+    """对带有时间维度的张量进行一次LIF神经元的发放模拟，可以视为一个激活函数，用法类似ReLU。
+        Generates spikes based on LIF module. It can be considered as an activation function and is used similar to ReLU. The input tensor needs to have an additional time dimension, which in this case is on the last dimension of the data.
+    """
+    def __init__(self):
+        super(LIFSpike, self).__init__()
+
+    def forward(self, x):
+        u   = torch.zeros(x.shape[:-1] , device=x.device)
+        out = torch.zeros(x.shape, device=x.device)
         for step in range(steps):
-            #x_ = self.layer(x[..., step])
-            #print(x_.shape, u.shape, out.shape)
-            u, out[..., step] = state_update(u, out[..., max(step-1, 0)], x_[..., step])
-        #print(out.shape)
-        #print("--------")
-        #out = out.reshape((-1,) + out.shape[1:-1])
+            u, out[..., step] = state_update(u, out[..., max(step-1, 0)], x[..., step])
         return out
-        '''
-        
+
 
 class tdBatchNorm(nn.BatchNorm2d):
+    """tdBN的实现。相关论文链接：https://arxiv.org/pdf/2011.05280。具体是在BN时，也在时间域上作平均；并且在最后的系数中引入了alpha变量以及Vth。
+        Implementation of tdBN. Link to related paper: https://arxiv.org/pdf/2011.05280. In short it is averaged over the time domain as well when doing BN.
+    Args:
+        num_features (int): same with nn.BatchNorm2d
+        eps (float): same with nn.BatchNorm2d
+        momentum (float): same with nn.BatchNorm2d
+        alpha (float): an addtional parameter which may change in resblock.
+        affine (bool): same with nn.BatchNorm2d
+        track_running_stats (bool): same with nn.BatchNorm2d
+    """
     def __init__(self, num_features, eps=1e-05, momentum=0.1, alpha=1, affine=True, track_running_stats=True):
         super(tdBatchNorm, self).__init__(
             num_features, eps, momentum, affine, track_running_stats)
-        self.alpha = 1
+        self.alpha = alpha
 
     def forward(self, input):
-        #self._check_input_dim(input)
-
         exponential_average_factor = 0.0
 
         if self.training and self.track_running_stats:
