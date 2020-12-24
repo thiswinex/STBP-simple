@@ -38,16 +38,16 @@ spike = LIFSpike()
 bn = nn.BatchNorm2d(...)
 ```
 
-那么只需要：
+那么需要将BN层替换为tdBN层：
 
 ```
+bn = tdBatchNorm(...)
 conv_s = tdLayer(conv, bn)
 ```
 
 其余步骤同上。
 
 如果使用的是普通数据集（MNIST、CIFAR10等），在数据输入网络前需要将输入往时间维度广播。`example.py`中给出了使用STBP方法在普通数据集上训练SNN的示例实现。脉冲数据集（N-MNIST等）不需要广播操作，但脉冲数据集往往体积庞大且需要预处理。`example_dvs.py`中给出了使用STBP方法在脉冲数据集上训练SNN的示例实现，`dataset.py`中则给出了预处理N-MNIST数据集的示例实现。
-
 
 
 ## 关于STBP
