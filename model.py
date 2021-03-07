@@ -39,6 +39,20 @@ class NMNISTNet(nn.Module):  # Example net for N-MNIST
         out = torch.sum(x, dim=2) / steps  # [N, neurons, steps]
         return out
 
+seq_net = nn.Sequential(
+    tdLayer(nn.Conv2d(1, 15, 5, 1, 2, bias=None)),
+    LIFSpike(),
+    tdLayer(nn.AvgPool2d(2)),
+    tdLayer(nn.Conv2d(15, 40, 5, 1, 2, bias=None)),
+    LIFSpike(),
+    tdLayer(nn.AvgPool2d(2)),
+    nn.Flatten(1, 3),
+    tdLayer(nn.Linear(7 * 7 * 40, 300)),
+    LIFSpike(),
+    tdLayer(nn.Linear(300, 10)),
+    RateCoding(),
+)
+
 
 
 class MNISTNet(nn.Module):  # Example net for MNIST

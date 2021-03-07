@@ -128,7 +128,8 @@ def main():
                         ])),
         batch_size=args.test_batch_size, shuffle=True, **kwargs)
 
-    model = resnet19().to(device)
+    #model = resnet19().to(device)
+    model = seq_net.to(device)
     
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     

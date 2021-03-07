@@ -8,8 +8,8 @@ dt = 5
 simwin = dt * steps
 a = 0.25
 aa = 0.5    # 梯度近似项 
-Vth = 0.2   # 阈值电压 V_threshold
-tau = 0.25  # 漏电常熟 tau
+Vth = 1.5   # 阈值电压 V_threshold
+tau = 0.1  # 漏电常数 tau
 
 
 class SpikeAct(torch.autograd.Function):
@@ -57,6 +57,7 @@ class tdLayer(nn.Module):
         self.bn = bn
 
     def forward(self, x):
+        steps = x.shape[-1]
         x_ = torch.zeros(self.layer(x[..., 0]).shape + (steps,), device=x.device)
         for step in range(steps):
             x_[..., step] = self.layer(x[..., step])
@@ -74,11 +75,59 @@ class LIFSpike(nn.Module):
         super(LIFSpike, self).__init__()
 
     def forward(self, x):
+        steps = x.shape[-1]
         u   = torch.zeros(x.shape[:-1] , device=x.device)
         out = torch.zeros(x.shape, device=x.device)
         for step in range(steps):
             u, out[..., step] = state_update(u, out[..., max(step-1, 0)], x[..., step])
         return out
+
+
+class LIFVoltage(nn.Module):
+    """末尾输出电压的LIF神经元
+    """
+    def __init__(self):
+        super(LIFVoltage, self).__init__()
+
+    def forward(self, x):
+        steps = x.shape[-1]
+        u   = torch.zeros(x.shape[:-1] , device=x.device)
+        out = torch.zeros(x.shape, device=x.device)
+        for step in range(steps):
+            u, out[..., step] = state_update(u, out[..., max(step-1, 0)], x[..., step])
+        return u
+
+
+class RateCoding(nn.Module):
+    """对输出进行频率编码。
+    """
+    def __init__(self):
+        super(RateCoding, self).__init__()
+
+    def forward(self, x):
+        return torch.sum(x, dim=2) / x.shape[-1]
+
+
+class Transpose(nn.Module):
+    """维度变换，permute的Module化实现。
+    """
+    def __init__(self, *args):
+        super(Transpose, self).__init__()
+        self.trans_args = args
+
+    def forward(self, x):
+        return x.permute(self.trans_args)
+
+
+class SNNCell(nn.Module):
+    def __init__(self, snn):
+        super(SNNCell, self).__init__()
+        self.snn = snn
+
+    def forward(self, x, hidden):    # u[layer, batch, hidden]
+        x = self.snn(x)
+        return x, hidden
+
 
 
 class tdBatchNorm(nn.BatchNorm2d):
