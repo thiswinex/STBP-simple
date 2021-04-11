@@ -5,16 +5,18 @@ import torch.optim as optim
 
 
 args = {
-    'steps':    8,
+    'steps':    4,
     'dt':       5,
     'a':        0.25,   # 梯度近似项 
     'aa':       0.5,
-    'Vth':      1.5,    # 阈值电压 V_threshold
-    'tau':      0.1     # 漏电常数 tau
+    'Vth':      0.3,    # 阈值电压 V_threshold
+    'tau':      0.3     # 漏电常数 tau
 }
 
 def get_args():
     return args
+
+
 
 
 class SpikeAct(torch.autograd.Function):
@@ -25,7 +27,7 @@ class SpikeAct(torch.autograd.Function):
     def forward(ctx, input):
         ctx.save_for_backward(input)
         # if input = u > Vth then output = 1
-        output = torch.gt(input, args['Vth']) 
+        output = torch.gt(input, 0) 
         return output.float()
 
     @staticmethod
@@ -37,12 +39,28 @@ class SpikeAct(torch.autograd.Function):
         hu = hu.float() / (2 * args['aa'])
         return grad_input * hu
 
+
+
 spikeAct = SpikeAct.apply
 
-
-def state_update(u_t_n1, o_t_n1, W_mul_o_t1_n):
+def state_update_eval(u_t_n1, o_t_n1, W_mul_o_t1_n):
     u_t1_n1 = args['tau'] * u_t_n1 * (1 - o_t_n1) + W_mul_o_t1_n
-    o_t1_n1 = spikeAct(u_t1_n1 - args['Vth'])
+    o_t1_n1 = torch.gt(u_t1_n1 - args['Vth'], 0).float()
+    return u_t1_n1, o_t1_n1
+
+
+def state_update(u_t_n1, o_t_n1, W_mul_o_t1_n, ksi):
+    u_t1_n1 = args['tau'] * u_t_n1 * (1 - o_t_n1) + W_mul_o_t1_n
+    #u_t1_n1 = W_mul_o_t1_n
+    #o_t1_n1 = F.sigmoid(1 / ksi * (u_t1_n1 - args['Vth']))
+    #o_t1_n1 = F.sigmoid(-(ksi.abs().log()) * (u_t1_n1 - args['Vth']))
+    #o_t1_n1 = F.hardsigmoid(-(ksi.abs().log()) * (u_t1_n1 - args['Vth']))
+    #o_t1_n1 = F.sigmoid((u_t1_n1 - args['Vth']))
+    o_t1_n1 = spikeAct((u_t1_n1 - args['Vth']))
+    #o_t1_n1 = F.relu(u_t1_n1)
+    #o_t1_n1 = F.relu6(u_t1_n1)
+    #o_t1_n1 = F.hardtanh(u_t1_n1, min_val=-1, max_val=1) + 1
+    #o_t1_n1 = F.relu(u_t1_n1 - args['Vth'])
     return u_t1_n1, o_t1_n1
 
 
@@ -78,14 +96,23 @@ class LIFSpike(nn.Module):
     """
     def __init__(self):
         super(LIFSpike, self).__init__()
+        self.ksi = torch.nn.Parameter(torch.tensor([0.36]), requires_grad=True)
 
     def forward(self, x):
-        steps = x.shape[-1]
-        u   = torch.zeros(x.shape[:-1] , device=x.device)
-        out = torch.zeros(x.shape, device=x.device)
-        for step in range(steps):
-            u, out[..., step] = state_update(u, out[..., max(step-1, 0)], x[..., step])
-        return out
+        if self.training:
+            steps = x.shape[-1]
+            u   = torch.zeros(x.shape[:-1] , device=x.device)
+            out = torch.zeros(x.shape, device=x.device)
+            for step in range(steps):
+                u, out[..., step] = state_update(u, out[..., max(step-1, 0)], x[..., step], self.ksi.to(x.device))
+            return out
+        else:
+            steps = x.shape[-1]
+            u   = torch.zeros(x.shape[:-1] , device=x.device)
+            out = torch.zeros(x.shape, device=x.device)
+            for step in range(steps):
+                u, out[..., step] = state_update_eval(u, out[..., max(step-1, 0)], x[..., step])
+            return out
 
 
 class LIFVoltage(nn.Module):
@@ -136,7 +163,7 @@ class BroadCast(nn.Module):
 
     def forward(self, x):
         x = x.unsqueeze(len(x.shape))
-        x = torch.broadcast_to(x, x.shape[:-1] + (args['steps'],)) 
+        x = torch.broadcast_to(x, x.shape[:-1] + (args['steps'],))
         return x
 
 
@@ -164,7 +191,7 @@ class tdBatchNorm(nn.BatchNorm2d):
         affine (bool): same with nn.BatchNorm2d
         track_running_stats (bool): same with nn.BatchNorm2d
     """
-    def __init__(self, num_features, eps=1e-05, momentum=0.1, alpha=1, affine=True, track_running_stats=True):
+    def __init__(self, num_features, eps=1e-05, momentum=0.1, alpha=1., affine=True, track_running_stats=True):
         super(tdBatchNorm, self).__init__(
             num_features, eps, momentum, affine, track_running_stats)
         self.alpha = alpha

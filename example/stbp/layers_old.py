@@ -3,31 +3,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from torch.utils.cpp_extension import load
-lif_cuda = load(name="lif_cuda", sources=["lif_cuda.cpp", "lif_cuda_kernel.cu"], verbose=True)
-#help(lif_cpp)
-
 
 args = {
     'steps':    8,
     'dt':       5,
     'a':        0.25,   # 梯度近似项 
     'aa':       0.5,
-    'Vth':      0.3,    # 阈值电压 V_threshold
-    'tau':      0.3     # 漏电常数 tau
+    'Vth':      1.5,    # 阈值电压 V_threshold
+    'tau':      0.1     # 漏电常数 tau
 }
 
 def get_args():
     return args
 
 
-
 class SpikeAct(torch.autograd.Function):
+    """ 定义脉冲激活函数，并根据论文公式进行梯度的近似。
+        Implementation of the spiking activation function with an approximation of gradient.
+    """
     @staticmethod
     def forward(ctx, input):
         ctx.save_for_backward(input)
         # if input = u > Vth then output = 1
-        output = torch.gt(input, args['Vth']) 
+        output = torch.gt(input, 0) 
         return output.float()
 
     @staticmethod
@@ -41,51 +39,7 @@ class SpikeAct(torch.autograd.Function):
 
 
 
-class LIFActFunction(torch.autograd.Function):
-    """ 定义脉冲激活函数，并根据论文公式进行梯度的近似。
-        Implementation of the spiking activation function with an approximation of gradient.
-    """
-    @staticmethod
-    def forward(ctx, input):
-        output = lif_cuda.forward(input, args['Vth'], args['tau'])
-        ctx.save_for_backward(output, input)
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        grad_input = lif_cuda.backward(grad_output, *ctx.saved_tensors, args['Vth'], args['tau'])
-        return grad_input
-
-
-spikeAct = LIFActFunction.apply
 spikeAct = SpikeAct.apply
-
-class LIFAct(nn.Module):
-    def __init__(self):
-        super(LIFAct, self).__init__()
-    
-    def forward(self, input):
-        return LIFActFunction.apply(input)
-
-
-if __name__ == '__main__':
-    device = torch.device("cuda:2")
-    i = torch.randn((1,1,3,3,1), requires_grad=False).to(device)
-    a = torch.randn((1,1,3,3,1), requires_grad=True).to(device)
-    #with torch.autograd.profiler.profile(use_cuda=True) as prof:
-    act = LIFAct()
-    o = act(a+i)
-    print(a)
-    o.backward(torch.ones_like(o))
-    print(o.view(1,-1))
-    print(a.grad.view(1,-1))
-    #time.perf_counter()
-    #print(prof.key_averages().table(sort_by="self_cpu_time_total"))
-    #print(prof.key_averages().table(sort_by="self_cuda_time_total"))
-
-
-#TODO  LIF就不并行化了(好像也可以并行)
-#TODO  Conv/BN/Linear需要并行
 
 
 def state_update(u_t_n1, o_t_n1, W_mul_o_t1_n):
