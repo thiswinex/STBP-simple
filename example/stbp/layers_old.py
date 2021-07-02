@@ -7,8 +7,7 @@ import torch.optim as optim
 args = {
     'steps':    8,
     'dt':       5,
-    'a':        0.25,   # 梯度近似项 
-    'aa':       0.5,
+    'len':      0.5,   # 梯度近似项 
     'Vth':      1.5,    # 阈值电压 V_threshold
     'tau':      0.1     # 漏电常数 tau
 }
@@ -33,18 +32,14 @@ class SpikeAct(torch.autograd.Function):
         input, = ctx.saved_tensors 
         grad_input = grad_output.clone()
         # hu is an approximate func of df/du
-        hu = abs(input) < args['aa']
-        hu = hu.float() / (2 * args['aa'])
+        hu = abs(input) < args['len']
+        hu = hu.float() / (2 * args['len'])
         return grad_input * hu
-
-
-
-spikeAct = SpikeAct.apply
 
 
 def state_update(u_t_n1, o_t_n1, W_mul_o_t1_n):
     u_t1_n1 = args['tau'] * u_t_n1 * (1 - o_t_n1) + W_mul_o_t1_n
-    o_t1_n1 = spikeAct(u_t1_n1 - args['Vth'])
+    o_t1_n1 = SpikeAct.apply(u_t1_n1 - args['Vth'])
     return u_t1_n1, o_t1_n1
 
 
@@ -143,7 +138,7 @@ class BroadCast(nn.Module):
 
 
 class SNNCell(nn.Module):
-    """用于某个脚本的一个Wrapper。
+    """用于LSTM转换脚本的一个Wrapper。
     """
     def __init__(self, snn):
         super(SNNCell, self).__init__()

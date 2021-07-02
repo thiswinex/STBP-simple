@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-
+import time
 from torch.utils.cpp_extension import load
 lif_cuda = load(name="lif_cuda", sources=["lif_cuda.cpp", "lif_cuda_kernel.cu"], verbose=True)
 #help(lif_cpp)
@@ -53,11 +53,13 @@ class LIFActFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        #print("GRAD OUTPUT:", grad_output.shape)
         grad_input = lif_cuda.backward(grad_output, *ctx.saved_tensors, args['Vth'], args['tau'])
+        #print("GRAD INPUT:", grad_input.shape)
         return grad_input
 
 
-spikeAct = LIFActFunction.apply
+#spikeAct = LIFActFunction.apply
 spikeAct = SpikeAct.apply
 
 class LIFAct(nn.Module):
@@ -67,25 +69,6 @@ class LIFAct(nn.Module):
     def forward(self, input):
         return LIFActFunction.apply(input)
 
-
-if __name__ == '__main__':
-    device = torch.device("cuda:2")
-    i = torch.randn((1,1,3,3,1), requires_grad=False).to(device)
-    a = torch.randn((1,1,3,3,1), requires_grad=True).to(device)
-    #with torch.autograd.profiler.profile(use_cuda=True) as prof:
-    act = LIFAct()
-    o = act(a+i)
-    print(a)
-    o.backward(torch.ones_like(o))
-    print(o.view(1,-1))
-    print(a.grad.view(1,-1))
-    #time.perf_counter()
-    #print(prof.key_averages().table(sort_by="self_cpu_time_total"))
-    #print(prof.key_averages().table(sort_by="self_cuda_time_total"))
-
-
-#TODO  LIF就不并行化了(好像也可以并行)
-#TODO  Conv/BN/Linear需要并行
 
 
 def state_update(u_t_n1, o_t_n1, W_mul_o_t1_n):
@@ -249,3 +232,50 @@ class tdBatchNorm(nn.BatchNorm2d):
             input = input * self.weight[None, :, None, None, None] + self.bias[None, :, None, None, None]
 
         return input
+    
+    
+    
+    
+    
+if __name__ == '__main__':
+    #pass
+    device = torch.device("cuda:0")
+    #i = torch.randn((32,128,56,56,8), requires_grad=False).to(device) # [N, C, H, W, T]
+    a = torch.randn((32,128,56,56,8), requires_grad=True).to(device)   # Raise Memory Error
+    #i = torch.randn((4,4,4,4,4), requires_grad=False).to(device) # [N, C, H, W, T]
+    #a = torch.randn((4,4,4,4,4), requires_grad=True).to(device)
+    #with torch.autograd.profiler.profile(use_cuda=True) as prof:
+    act = LIFAct()
+    #act = LIFSpike()
+    #A = torch.ones((1,1,3,3,2), requires_grad=True).to(device) * 0.3
+    #print(a)
+    # warm up
+    for i in range(10):
+        o = act(a)
+        #a.retain_grad()
+        #o.backward(torch.ones_like(o))
+    with torch.autograd.profiler.profile(use_cuda=True,profile_memory=True) as prof:
+        #o = spikeAct(a)
+        for i in range(10):
+            o = act(a)
+        #o = a * 2
+            #a.retain_grad()
+        #print(o.grad_fn)
+        #print(i.shape, o.shape)
+        #loss = F.mse_loss(o, i)
+        #print(a)
+        #print((w*i).view(1,-1))
+            #o.backward(torch.ones_like(o))
+    #loss.backward()
+    #print(o.view(1,-1))
+    #print("a.requires_grad = ", a.requires_grad)
+    #print(a)
+    #print(prof)
+    #print(a.grad)
+    #time.perf_counter()
+    print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+    print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+
+
+#TODO  LIF就不并行化了(好像也可以并行)
+#TODO  Conv/BN/Linear需要并行（应该不需要，和for效率应该差不多）

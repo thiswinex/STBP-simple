@@ -40,11 +40,14 @@ __global__ void lif_cuda_forward_kernel(
     const torch::PackedTensorAccessor32<scalar_t, 5, torch::RestrictPtrTraits> input,
     torch::PackedTensorAccessor32<scalar_t, 5, torch::RestrictPtrTraits> output,
     const int input_size,
+    const int batch_size,
     const float vth, 
     const float tau, 
     const int steps) {
   const int n = blockIdx.y;
+  //const int n = threadIdx.x;
   const int s = blockIdx.x * blockDim.x + threadIdx.x;
+  //const int s = blockIdx.x * blockDim.x + blockIdx.y;
   const int c = input.size(1);
   const int h = input.size(2);
   const int w = input.size(3);
@@ -53,18 +56,18 @@ __global__ void lif_cuda_forward_kernel(
   const int windex = (s - cindex * c - hindex * h);
   int i;
 
-  if (s < input_size) {
+  if (s < input_size && n < batch_size) {
     auto voltage = input[n][cindex][hindex][windex][0];
-    output[n][cindex][hindex][windex][0] = 99;//spike(voltage, vth);
+    output[n][cindex][hindex][windex][0] = 100;//spike(voltage, vth);
     for (i=1; i<steps; i++) {
-      voltage = voltage * tau * (1 - output[n][cindex][hindex][windex][i-1]) + input[n][cindex][hindex][windex][i];
-      /*
-      output[n][cindex][hindex][windex][i] = 
-      if (voltage > vth) {
-        output[n][cindex][hindex][windex][i] = 0; 
-        voltage = 0;
-      }*/
-      output[n][cindex][hindex][windex][i] = spike(voltage, vth);
+      //voltage = voltage * tau * (1 - output[n][cindex][hindex][windex][i-1]) + input[n][cindex][hindex][windex][i];
+      
+      //output[n][cindex][hindex][windex][i] = 
+      //if (voltage > vth) {
+      //  output[n][cindex][hindex][windex][i] = 0; 
+      //  voltage = 0;
+      //}
+      //output[n][cindex][hindex][windex][i] = 100;//spike(voltage, vth);
     }
   }
 }
@@ -88,12 +91,12 @@ __global__ void lif_cuda_backward_kernel(
   const int hindex = (s - cindex * c) / w;
   const int windex = (s - cindex * c - hindex * h);
   int i, j;
-      //看自己的笔记 写BACKWARD
       // dOn/dIm = dSpike * tau(1-O_n-1) * ... * tau(1-Om)
   if (s < input_size) {
-    auto grad_lif = d_spike(input[n][cindex][hindex][windex][steps-1]);
+    auto grad_lif = d_spike(input[n][cindex][hindex][windex][steps-1] - vth);
+    
     for (i=steps-1; i>=0; i--) {
-      grad_lif = d_spike(input[n][cindex][hindex][windex][i]);
+      grad_lif = d_spike(input[n][cindex][hindex][windex][i] - vth);
       grad_input[n][cindex][hindex][windex][i] = grad_output[n][cindex][hindex][windex][i] * grad_lif;
       for (j=i-1; j>=0; j--) {
         grad_input[n][cindex][hindex][windex][j] = grad_output[n][cindex][hindex][windex][i] * grad_lif;
@@ -118,7 +121,7 @@ torch::Tensor lif_cuda_forward(
   //int steps = 0;
   //int input_size = 0;
   const auto steps = input.size(4);
-  const auto input_size = input.size(1) * input.size(2) * input.size(3);
+  const int input_size = input.size(1) * input.size(2) * input.size(3); // C * H * W
   /*
   if (ndims == 3) { // fc
       steps = input.size(2);
@@ -129,7 +132,6 @@ torch::Tensor lif_cuda_forward(
       input_size = input.size(1) * input.size(2) * input.size(3);
   }*/
   const auto batch_size = input.size(0);
-  //一般一个block 1024个thread。看你怎么分block
   const int threads = 1024;
   const dim3 blocks((input_size + threads - 1) / threads, batch_size);
   //const dim3 threads(input.size(2), input.size(3));
@@ -138,7 +140,7 @@ torch::Tensor lif_cuda_forward(
     lif_cuda_forward_kernel<scalar_t><<<blocks, threads>>>(
         input.packed_accessor32<scalar_t, 5, torch::RestrictPtrTraits>(),
         output.packed_accessor32<scalar_t, 5, torch::RestrictPtrTraits>(),
-        input_size, vth, tau, steps);
+        input_size, batch_size, vth, tau, steps);
   }));
 
   return output;
