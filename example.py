@@ -105,11 +105,11 @@ def main():
 
     torch.manual_seed(args.seed)
 
-    device = torch.device("cuda:0" if use_cuda else "cpu")
+    device = torch.device("cuda" if use_cuda else "cpu")
 
-    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+    kwargs = {'num_workers': 2, 'pin_memory': True} if use_cuda else {}
 
-    writer = SummaryWriter('./summaries/resnet_2')
+    writer = SummaryWriter('<Tensorboard log path>')
     
     train_loader = torch.utils.data.DataLoader(
         datasets.CIFAR10('./data', train=True, download=True,
@@ -132,8 +132,8 @@ def main():
     
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     
-    checkpoint_path = './tmp/cifar10/cifar10_spike.pt'
-    if os.path.isdir(checkpoint_path) or True:
+    checkpoint_path = '<model path>'
+    if checkpoint_path is not None and os.path.isdir(checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
         model.load_state_dict(checkpoint)
         print('Model loaded.')
@@ -146,8 +146,8 @@ def main():
     writer.close()
 
     if (args.save_model):
-        torch.save(model.state_dict(), "./tmp/cifar10/cifar10_spike.pt")
-        torch.save(model, "./tmp/cifar10/cifar10_spike.pth")
+        torch.save(model.state_dict(), "<state dict save path>")
+        torch.save(model, "<model save path>")
 
 
 if __name__ == '__main__':

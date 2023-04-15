@@ -9,7 +9,14 @@ from torchvision import datasets, transforms
 from model import *
 from dataset import NMNIST
 from tensorboardX import SummaryWriter
-
+from setting import (
+    STEPS,
+    DT,
+    SIMWIN,
+    ALPHA,
+    VTH,
+    TAU,
+)
 
 def train(args, model, device, train_loader, optimizer, epoch, writer):
     model.train()
@@ -22,7 +29,7 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
         optimizer.step()
         if batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data / steps), len(train_loader.dataset),
+                epoch, batch_idx * len(data / STEPS), len(train_loader.dataset),
                        100. * batch_idx / len(train_loader), loss.item()))
         
 
@@ -36,8 +43,6 @@ def test(args, model, device, test_loader, epoch, writer):
             output = model(data)
             test_loss += F.mse_loss(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            #print(pred.shape)
-            #print(target.shape)
             target_label = target.argmax(dim=1, keepdim=True)
 
             correct += pred.eq(target_label.view_as(pred)).sum().item()
@@ -75,14 +80,14 @@ def main():
 
     torch.manual_seed(args.seed)
 
-    device = torch.device("cuda:2" if use_cuda else "cpu")
+    device = torch.device("cuda" if use_cuda else "cpu")
 
-    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
+    kwargs = {'num_workers': 2, 'pin_memory': True} if use_cuda else {}
 
-    writer = SummaryWriter('./summaries/cifar10')
+    writer = SummaryWriter('<Tensorboard log path>')
     
-    train_dataset = NMNIST(train=True,  step=steps, dt=dt, path='./data/NMNIST_npy/Train/')
-    test_dataset = NMNIST(train=False,  step=steps, dt=dt, path='./data/NMNIST_npy/Test/')
+    train_dataset = NMNIST(train=True,  step=STEPS, dt=DT, path='./data/NMNIST_npy/Train/')
+    test_dataset = NMNIST(train=False,  step=STEPS, dt=DT, path='./data/NMNIST_npy/Test/')
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size, shuffle=True, **kwargs)
@@ -93,7 +98,8 @@ def main():
     model = NMNISTNet().to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
-    model=nn.DataParallel(model, device_ids=[2,3])
+    # use DP or DDP here
+    # model=nn.DataParallel(model, device_ids=[2,3])
     
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch, writer)
@@ -102,8 +108,8 @@ def main():
     writer.close()
 
     if (args.save_model):
-        torch.save(model.state_dict(), "./tmp/NMNIST/NMNIST.pt")
-        torch.save(model, "./tmp/NMNIST/NMNIST.pth")
+        torch.save(model.state_dict(), "<state dict save path>")
+        torch.save(model, "<model save path>")
 
 
 if __name__ == '__main__':
